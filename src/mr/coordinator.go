@@ -78,7 +78,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	// note that the default values are 0 - "not started"
 	mStatus := make([]MapTaskStatus, len(files))
-	rStatus := make([]ReduceTaskStatus, len(files))
+	rStatus := make([]ReduceTaskStatus, nReduce)
 
 	// note that we do not ned to initialise mutexes
 	c := Coordinator{
