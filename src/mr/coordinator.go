@@ -1,14 +1,39 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
+import (
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+	"sync"
+)
+
+type MapTaskStatus int64
+
+const (
+	MapNotStarted MapTaskStatus = 0
+	MapInProgress MapTaskStatus = 1
+	MapCompleted  MapTaskStatus = 2
+)
+
+type ReduceTaskStatus int64
+
+const (
+	ReduceNotStarted ReduceTaskStatus = 0
+	ReduceInProgress ReduceTaskStatus = 1
+	ReduceCompleted  ReduceTaskStatus = 2
+)
 
 type Coordinator struct {
-	// Your definitions here.
-
+	// READ-ONLY
+	nReduce int
+	files   []string
+	// MODIFIABLE
+	mu           sync.Mutex
+	mapStatus    []MapTaskStatus
+	reduceStatus []ReduceTaskStatus
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -49,9 +74,19 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+	fmt.Println("Coordinator started")
 
-	// Your code here.
+	// note that the default values are 0 - "not started"
+	mStatus := make([]MapTaskStatus, len(files))
+	rStatus := make([]ReduceTaskStatus, len(files))
+
+	// note that we do not ned to initialise mutexes
+	c := Coordinator{
+		nReduce:      nReduce,
+		files:        files,
+		mapStatus:    mStatus,
+		reduceStatus: rStatus,
+	}
 
 	c.server()
 	return &c
