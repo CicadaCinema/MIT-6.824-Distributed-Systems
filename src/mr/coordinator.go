@@ -63,11 +63,21 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	ret := false
+	// check that all the map tasks have been completed
+	for _, v := range c.mapStatus {
+		if v != MapCompleted {
+			return false
+		}
+	}
 
-	// Your code here.
+	// check that all the reduce tasks have been completed
+	for _, v := range c.reduceStatus {
+		if v != ReduceCompleted {
+			return false
+		}
+	}
 
-	return ret
+	return true
 }
 
 // create a Coordinator.
