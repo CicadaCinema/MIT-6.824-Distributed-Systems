@@ -63,6 +63,8 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
+	c.mu.Lock()
+
 	// check that all the map tasks have been completed
 	for _, v := range c.mapStatus {
 		if v != MapCompleted {
@@ -76,6 +78,8 @@ func (c *Coordinator) Done() bool {
 			return false
 		}
 	}
+
+	c.mu.Unlock()
 
 	return true
 }
