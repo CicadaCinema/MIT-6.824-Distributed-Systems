@@ -154,6 +154,11 @@ func Worker(mapf func(string, string) []KeyValue,
 			ofile.Close()
 			os.Rename(ofile.Name(), path.Join(cwd, oname))
 
+			// remove intermediate files
+			for i := 0; i < task.NMap; i++ {
+				os.Remove(fmt.Sprintf("mr-%d-%d", i, task.ReduceTaskNumber))
+			}
+
 			completeReport := MarkReduceCompleteArgs{}
 			completeReport.ReduceTaskNumber = task.ReduceTaskNumber
 			// the coordinator is waiting for me to complete my reduce task, so it will definitely not be dead and this call() will return without an error
