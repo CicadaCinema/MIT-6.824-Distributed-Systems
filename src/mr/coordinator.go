@@ -7,6 +7,7 @@ import (
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
 
 type MapTaskStatus int64
@@ -31,9 +32,11 @@ type Coordinator struct {
 	nMap    int
 	files   []string
 	// MODIFIABLE
-	mu           sync.Mutex
-	mapStatus    []MapTaskStatus
-	reduceStatus []ReduceTaskStatus
+	mu              sync.Mutex
+	mapStatus       []MapTaskStatus
+	mapStartTime    []time.Time
+	reduceStatus    []ReduceTaskStatus
+	reduceStartTime []time.Time
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -54,6 +57,21 @@ func (c *Coordinator) TaskRequest(args *TaskRequestArgs, reply *TaskRequestReply
 
 			// now this map task is in progress
 			c.mapStatus[i] = MapInProgress
+			c.mapStartTime[i] = time.Now()
+			return nil
+		}
+	}
+
+	// see if any map tasks are in progress but are taking too long (more than 10s)
+	for i, v := range c.mapStatus {
+		if v == MapInProgress && time.Now().Sub(c.mapStartTime[i]).Seconds() > 10 {
+			reply.TaskToDo = MapTask
+			reply.MapFilename = c.files[i]
+			reply.MapTaskNumber = i
+
+			// now this map task is in progress
+			c.mapStatus[i] = MapInProgress
+			c.mapStartTime[i] = time.Now()
 			return nil
 		}
 	}
@@ -75,6 +93,20 @@ func (c *Coordinator) TaskRequest(args *TaskRequestArgs, reply *TaskRequestReply
 
 			// now this reduce task is in progress
 			c.reduceStatus[i] = ReduceInProgress
+			c.reduceStartTime[i] = time.Now()
+			return nil
+		}
+	}
+
+	// see if any reduce tasks are in progress but are taking too long (more than 10s)
+	for i, v := range c.reduceStatus {
+		if v == ReduceInProgress && time.Now().Sub(c.reduceStartTime[i]).Seconds() > 10 {
+			reply.TaskToDo = ReduceTask
+			reply.ReduceTaskNumber = i
+
+			// now this reduce task is in progress
+			c.reduceStatus[i] = ReduceInProgress
+			c.reduceStartTime[i] = time.Now()
 			return nil
 		}
 	}
@@ -147,17 +179,24 @@ func (c *Coordinator) Done() bool {
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	// fmt.Println("Coordinator started")
 
+	nMap := len(files)
+
 	// note that the default values are 0 - "not started"
-	mStatus := make([]MapTaskStatus, len(files))
+	mStatus := make([]MapTaskStatus, nMap)
 	rStatus := make([]ReduceTaskStatus, nReduce)
+
+	mStartTime := make([]time.Time, nMap)
+	rStartTime := make([]time.Time, nReduce)
 
 	// note that we do not ned to initialise mutexes
 	c := Coordinator{
-		nReduce:      nReduce,
-		nMap:         len(files),
-		files:        files,
-		mapStatus:    mStatus,
-		reduceStatus: rStatus,
+		nReduce:         nReduce,
+		nMap:            nMap,
+		files:           files,
+		mapStatus:       mStatus,
+		mapStartTime:    mStartTime,
+		reduceStatus:    rStatus,
+		reduceStartTime: rStartTime,
 	}
 
 	c.server()
