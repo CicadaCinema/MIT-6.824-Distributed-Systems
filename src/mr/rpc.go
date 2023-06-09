@@ -36,6 +36,7 @@ type TaskRequestArgs struct{}
 
 type TaskRequestReply struct {
 	NReduce  int
+	NMap     int
 	TaskToDo TaskKind
 	// if requested to perform a map task, perform it on the data in this file which has this task number
 	MapFilename   string

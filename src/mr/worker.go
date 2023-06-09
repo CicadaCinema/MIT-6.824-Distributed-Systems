@@ -1,10 +1,14 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io/ioutil"
 	"log"
 	"net/rpc"
+	"os"
+	"sort"
 	"time"
 )
 
@@ -22,18 +26,25 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+// for sorting by key.
+type ByKey []KeyValue
+
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	fmt.Println("Worker started")
+	//fmt.Println("Worker started")
 
 	// repeatedly request work
 	for {
 		task := TaskRequestReply{}
 		ok := call("Coordinator.TaskRequest", &TaskRequestArgs{}, &task)
 		if ok {
-			fmt.Printf("taskToDo has id %d\n", task.TaskToDo)
+			//fmt.Printf("taskToDo has id %d\n", task.TaskToDo)
 		} else {
 			// assume the coordinator is dead because all the tasks have been completed
 			return
@@ -45,13 +56,93 @@ func Worker(mapf func(string, string) []KeyValue,
 			time.Sleep(time.Second)
 			continue
 		case MapTask:
-			fmt.Println("TODO: DO MAP")
+			// file to map
+			filename := task.MapFilename
+
+			// intermediate[k] stores the list of key-value pairs corresponding to reduce task number k
+			intermediate := make([][]KeyValue, task.NReduce)
+			for i := 0; i < task.NReduce; i++ {
+				intermediate[i] = []KeyValue{}
+			}
+
+			// read input file and run map on it, storing the output in kva
+			file, err := os.Open(filename)
+			if err != nil {
+				log.Fatalf("cannot open %v", filename)
+			}
+			content, err := ioutil.ReadAll(file)
+			if err != nil {
+				log.Fatalf("cannot read %v", filename)
+			}
+			file.Close()
+			kva := mapf(filename, string(content))
+
+			// split kva into nReduce intermediate lists
+			for _, kv := range kva {
+				reduceTaskNum := ihash(kv.Key) % task.NReduce
+				intermediate[reduceTaskNum] = append(intermediate[reduceTaskNum], kv)
+			}
+
+			// write to intermediate files
+			for i := 0; i < task.NReduce; i++ {
+				dest_filename := fmt.Sprintf("mr-%d-%d", task.MapTaskNumber, i)
+				dest_file, _ := os.Create(dest_filename)
+
+				enc := json.NewEncoder(dest_file)
+				for _, kv := range intermediate[i] {
+					enc.Encode(&kv)
+				}
+				dest_file.Close()
+			}
+
 			completeReport := MarkMapCompleteArgs{}
 			completeReport.MapTaskNumber = task.MapTaskNumber
 			// the coordinator is waiting for me to complete my map task, so it will definitely not be dead and this call() will return without an error
 			call("Coordinator.MarkMapComplete", &completeReport, &MarkMapCompleteReply{})
 		case ReduceTask:
-			fmt.Println("TODO: DO REDUCE")
+			// populate key-value array read in from intermidiate input files
+			intermediate := []KeyValue{}
+			for i := 0; i < task.NMap; i++ {
+				source_filename := fmt.Sprintf("mr-%d-%d", i, task.ReduceTaskNumber)
+				source_file, _ := os.Open(source_filename)
+				dec := json.NewDecoder(source_file)
+				for {
+					var kv KeyValue
+					if err := dec.Decode(&kv); err != nil {
+						break
+					}
+					intermediate = append(intermediate, kv)
+				}
+				source_file.Close()
+			}
+
+			sort.Sort(ByKey(intermediate))
+
+			oname := fmt.Sprintf("mr-out-%d", task.ReduceTaskNumber)
+			ofile, _ := os.Create(oname)
+
+			// call Reduce on each distinct key in intermediate[],
+			// and print the result to mr-out-X, where X is the reduce task number
+			i := 0
+			for i < len(intermediate) {
+				j := i + 1
+				for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+					j++
+				}
+				values := []string{}
+				for k := i; k < j; k++ {
+					values = append(values, intermediate[k].Value)
+				}
+				output := reducef(intermediate[i].Key, values)
+
+				// this is the correct format for each line of Reduce output.
+				fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+				i = j
+			}
+
+			ofile.Close()
+
 			completeReport := MarkReduceCompleteArgs{}
 			completeReport.ReduceTaskNumber = task.ReduceTaskNumber
 			// the coordinator is waiting for me to complete my reduce task, so it will definitely not be dead and this call() will return without an error

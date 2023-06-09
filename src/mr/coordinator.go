@@ -1,7 +1,6 @@
 package mr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -29,6 +28,7 @@ const (
 type Coordinator struct {
 	// READ-ONLY
 	nReduce int
+	nMap    int
 	files   []string
 	// MODIFIABLE
 	mu           sync.Mutex
@@ -43,6 +43,7 @@ func (c *Coordinator) TaskRequest(args *TaskRequestArgs, reply *TaskRequestReply
 	defer c.mu.Unlock()
 
 	reply.NReduce = c.nReduce
+	reply.NMap = c.nMap
 
 	// see if any map tasks are available/not yet started
 	for i, v := range c.mapStatus {
@@ -144,7 +145,7 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	fmt.Println("Coordinator started")
+	// fmt.Println("Coordinator started")
 
 	// note that the default values are 0 - "not started"
 	mStatus := make([]MapTaskStatus, len(files))
@@ -153,6 +154,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	// note that we do not ned to initialise mutexes
 	c := Coordinator{
 		nReduce:      nReduce,
+		nMap:         len(files),
 		files:        files,
 		mapStatus:    mStatus,
 		reduceStatus: rStatus,
