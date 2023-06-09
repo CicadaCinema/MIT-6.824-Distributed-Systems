@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"path"
 	"sort"
 	"time"
 )
@@ -38,6 +39,11 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	//fmt.Println("Worker started")
+
+	// the current working directory and a temporary directory
+	cwd, _ := os.Getwd()
+	// usually this would be /tmp, but / and /home are on different btrfs subvolumes on my system which causes the error "invalid cross-device link" when moving files
+	tempdir := cwd
 
 	// repeatedly request work
 	for {
@@ -86,13 +92,16 @@ func Worker(mapf func(string, string) []KeyValue,
 			// write to intermediate files
 			for i := 0; i < task.NReduce; i++ {
 				dest_filename := fmt.Sprintf("mr-%d-%d", task.MapTaskNumber, i)
-				dest_file, _ := os.Create(dest_filename)
+				// create a temporary file that is guaranteed not to share a name with any others
+				dest_file, _ := os.CreateTemp(tempdir, "mrtempfile_intermediate_output")
 
 				enc := json.NewEncoder(dest_file)
 				for _, kv := range intermediate[i] {
 					enc.Encode(&kv)
 				}
+				// once all the data has beeen written to disk, rename the output file. this operation is atomic on UNIX
 				dest_file.Close()
+				os.Rename(dest_file.Name(), path.Join(cwd, dest_filename))
 			}
 
 			completeReport := MarkMapCompleteArgs{}
@@ -119,7 +128,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			sort.Sort(ByKey(intermediate))
 
 			oname := fmt.Sprintf("mr-out-%d", task.ReduceTaskNumber)
-			ofile, _ := os.Create(oname)
+			// create a temporary file that is guaranteed not to share a name with any others
+			ofile, _ := os.CreateTemp(tempdir, "mrtempfile_reduce_output")
 
 			// call Reduce on each distinct key in intermediate[],
 			// and print the result to mr-out-X, where X is the reduce task number
@@ -140,8 +150,9 @@ func Worker(mapf func(string, string) []KeyValue,
 
 				i = j
 			}
-
+			// once all the data has beeen written to disk, rename the output file. this operation is atomic on UNIX
 			ofile.Close()
+			os.Rename(ofile.Name(), path.Join(cwd, oname))
 
 			completeReport := MarkReduceCompleteArgs{}
 			completeReport.ReduceTaskNumber = task.ReduceTaskNumber
