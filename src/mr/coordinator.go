@@ -38,6 +38,63 @@ type Coordinator struct {
 
 // Your code here -- RPC handlers for the worker to call.
 
+func (c *Coordinator) TaskRequest(args *TaskRequestArgs, reply *TaskRequestReply) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	reply.NReduce = c.nReduce
+
+	// see if any map tasks are available/not yet started
+	for i, v := range c.mapStatus {
+		if v == MapNotStarted {
+			reply.TaskToDo = MapTask
+			reply.MapFilename = c.files[i]
+			reply.MapTaskNumber = i
+
+			// now this map task is in progress
+			c.mapStatus[i] = MapInProgress
+			return nil
+		}
+	}
+
+	// if any map tasks are still in progress, then we cannot give out a task
+	for _, v := range c.mapStatus {
+		if v == MapInProgress {
+			reply.TaskToDo = TaskUnavailable
+			return nil
+		}
+	}
+
+	// given that all the map tasks are completed,
+	// see if any reduce tasks are available/not yet started
+	for i, v := range c.reduceStatus {
+		if v == ReduceNotStarted {
+			reply.TaskToDo = ReduceTask
+			reply.ReduceTaskNumber = i
+
+			// now this reduce task is in progress
+			c.reduceStatus[i] = ReduceInProgress
+			return nil
+		}
+	}
+
+	// if we have reached this point, all the map tasks are complete and all the reduce tasks are one of: in progress, or complete
+	reply.TaskToDo = TaskUnavailable
+	return nil
+}
+func (c *Coordinator) MarkMapComplete(args *MarkMapCompleteArgs, reply *MarkMapCompleteReply) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.mapStatus[args.MapTaskNumber] = MapCompleted
+	return nil
+}
+func (c *Coordinator) MarkReduceComplete(args *MarkReduceCompleteArgs, reply *MarkReduceCompleteReply) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reduceStatus[args.ReduceTaskNumber] = ReduceCompleted
+	return nil
+}
+
 // an example RPC handler.
 //
 // the RPC argument and reply types are defined in rpc.go.
@@ -64,6 +121,7 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	// check that all the map tasks have been completed
 	for _, v := range c.mapStatus {
@@ -78,8 +136,6 @@ func (c *Coordinator) Done() bool {
 			return false
 		}
 	}
-
-	c.mu.Unlock()
 
 	return true
 }

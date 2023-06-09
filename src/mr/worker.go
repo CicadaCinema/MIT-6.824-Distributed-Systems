@@ -1,9 +1,12 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
+import (
+	"fmt"
+	"hash/fnv"
+	"log"
+	"net/rpc"
+	"time"
+)
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
@@ -25,11 +28,36 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	fmt.Println("Worker started")
 
-	// Your worker implementation here.
+	// repeatedly request work
+	for {
+		task := TaskRequestReply{}
+		ok := call("Coordinator.TaskRequest", &TaskRequestArgs{}, &task)
+		if ok {
+			fmt.Printf("taskToDo has id %d\n", task.TaskToDo)
+		} else {
+			// assume the coordinator is dead because all the tasks have been completed
+			return
+		}
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
-
+		switch task.TaskToDo {
+		case TaskUnavailable:
+			// sleep for one second and repeat the loop to ask for another task
+			time.Sleep(time.Second)
+			continue
+		case MapTask:
+			fmt.Println("TODO: DO MAP")
+			completeReport := MarkMapCompleteArgs{}
+			completeReport.MapTaskNumber = task.MapTaskNumber
+			// the coordinator is waiting for me to complete my map task, so it will definitely not be dead and this call() will return without an error
+			call("Coordinator.MarkMapComplete", &completeReport, &MarkMapCompleteReply{})
+		case ReduceTask:
+			fmt.Println("TODO: DO REDUCE")
+			completeReport := MarkReduceCompleteArgs{}
+			completeReport.ReduceTaskNumber = task.ReduceTaskNumber
+			// the coordinator is waiting for me to complete my reduce task, so it will definitely not be dead and this call() will return without an error
+			call("Coordinator.MarkReduceComplete", &completeReport, &MarkReduceCompleteReply{})
+		}
+	}
 }
 
 // example function to show how to make an RPC call to the coordinator.
