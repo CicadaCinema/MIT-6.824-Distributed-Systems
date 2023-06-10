@@ -73,13 +73,16 @@ func Worker(mapf func(string, string) []KeyValue,
 			// read input file and run map on its contents, storing the output in kva (code from mrsequential.go)
 			file, err := os.Open(filename)
 			if err != nil {
-				log.Fatalf("cannot open %v", filename)
+				log.Fatalf("cannot open %v: %s", filename, err)
 			}
 			content, err := ioutil.ReadAll(file)
 			if err != nil {
-				log.Fatalf("cannot read %v", filename)
+				log.Fatalf("cannot read %v: %s", filename, err)
 			}
-			file.Close()
+			err = file.Close()
+			if err != nil {
+				log.Fatalf("cannot close %v: %s", filename, err)
+			}
 			kva := mapf(filename, string(content))
 
 			// split kva into nReduce intermediate lists
@@ -93,17 +96,28 @@ func Worker(mapf func(string, string) []KeyValue,
 			for i := 0; i < task.NReduce; i++ {
 				// create a temporary file
 				dest_filename := fmt.Sprintf("mr-%d-%d", task.MapTaskNumber, i)
-				dest_file, _ := os.CreateTemp(tempdir, "mrtempfile_intermediate_output")
+				dest_file, err := os.CreateTemp(tempdir, "mrtempfile_intermediate_output")
+				if err != nil {
+					log.Fatalf("cannot create %v: %s", dest_filename, err)
+				}
 
 				// write data to this file
 				enc := json.NewEncoder(dest_file)
 				for _, kv := range intermediate[i] {
 					enc.Encode(&kv)
 				}
-				dest_file.Close()
+				err = dest_file.Close()
+				if err != nil {
+					log.Fatalf("cannot close %v: %s", dest_filename, err)
+				}
 
 				// once all the data has beeen written to disk, rename the output file. this operation is atomic on UNIX
-				os.Rename(dest_file.Name(), path.Join(cwd, dest_filename))
+				oldName := dest_file.Name()
+				newName := path.Join(cwd, dest_filename)
+				err = os.Rename(oldName, newName)
+				if err != nil {
+					log.Fatalf("cannot rename %s to %s: %s", oldName, newName, err)
+				}
 			}
 
 			completionReceipt := MarkMapCompleteArgs{}
@@ -119,7 +133,11 @@ func Worker(mapf func(string, string) []KeyValue,
 			intermediate := []KeyValue{}
 			for i := 0; i < task.NMap; i++ {
 				source_filename := fmt.Sprintf("mr-%d-%d", i, task.ReduceTaskNumber)
-				source_file, _ := os.Open(source_filename)
+				source_file, err := os.Open(source_filename)
+				if err != nil {
+					log.Fatalf("cannot open %v: %s", source_filename, err)
+				}
+
 				dec := json.NewDecoder(source_file)
 				for {
 					var kv KeyValue
@@ -128,14 +146,20 @@ func Worker(mapf func(string, string) []KeyValue,
 					}
 					intermediate = append(intermediate, kv)
 				}
-				source_file.Close()
+				err = source_file.Close()
+				if err != nil {
+					log.Fatalf("cannot close %v: %s", source_filename, err)
+				}
 			}
 
 			sort.Sort(ByKey(intermediate))
 
 			oname := fmt.Sprintf("mr-out-%d", task.ReduceTaskNumber)
 			// create a temporary file
-			ofile, _ := os.CreateTemp(tempdir, "mrtempfile_reduce_output")
+			ofile, err := os.CreateTemp(tempdir, "mrtempfile_reduce_output")
+			if err != nil {
+				log.Fatalf("cannot create %v: %s", oname, err)
+			}
 
 			// call Reduce on each distinct key in intermediate[] (code from mrsequential.go)
 			i := 0
@@ -151,18 +175,34 @@ func Worker(mapf func(string, string) []KeyValue,
 				output := reducef(intermediate[i].Key, values)
 
 				// this is the correct format for each line of Reduce output.
-				fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+				_, err := fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+				if err != nil {
+					log.Fatalf("cannot write to %v: %s", oname, err)
+				}
 
 				i = j
 			}
 
 			// once all the data has beeen written to disk, rename the output file. this operation is atomic on UNIX
 			ofile.Close()
-			os.Rename(ofile.Name(), path.Join(cwd, oname))
+			if err != nil {
+				log.Fatalf("cannot close %v: %s", oname, err)
+			}
+			oldName := ofile.Name()
+			newName := path.Join(cwd, oname)
+			os.Rename(oldName, newName)
+			if err != nil {
+				log.Fatalf("cannot rename %s to %s: %s", oldName, newName, err)
+			}
 
 			// remove the intermediate files
 			for i := 0; i < task.NMap; i++ {
-				os.Remove(fmt.Sprintf("mr-%d-%d", i, task.ReduceTaskNumber))
+				filenameForRemoval := fmt.Sprintf("mr-%d-%d", i, task.ReduceTaskNumber)
+				err := os.Remove(filenameForRemoval)
+				if err != nil {
+					log.Fatalf("cannot remove %v: %s", filenameForRemoval, err)
+				}
+
 			}
 
 			completionReceipt := MarkReduceCompleteArgs{}
