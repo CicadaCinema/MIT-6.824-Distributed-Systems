@@ -30,6 +30,7 @@ func ihash(key string) int {
 // for sorting by key.
 type ByKey []KeyValue
 
+// for sorting by key.
 func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
@@ -38,40 +39,38 @@ func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	//fmt.Println("Worker started")
+	// fmt.Println("Worker started")
 
 	// the current working directory and a temporary directory
+	// usually the temporary directory would be /tmp, but / and /home are on different btrfs subvolumes on my system which causes the error "invalid cross-device link" when moving files
 	cwd, _ := os.Getwd()
-	// usually this would be /tmp, but / and /home are on different btrfs subvolumes on my system which causes the error "invalid cross-device link" when moving files
 	tempdir := cwd
 
 	// repeatedly request work
 	for {
 		task := TaskRequestReply{}
 		ok := call("Coordinator.TaskRequest", &TaskRequestArgs{}, &task)
-		if ok {
-			//fmt.Printf("taskToDo has id %d\n", task.TaskToDo)
-		} else {
+		if !ok {
 			// assume the coordinator is dead because all the tasks have been completed
 			return
 		}
 
 		switch task.TaskToDo {
 		case TaskUnavailable:
-			// sleep for one second and repeat the loop to ask for another task
+			// if there is no task available, sleep for one second and repeat the loop to ask for another task
 			time.Sleep(time.Second)
 			continue
 		case MapTask:
 			// file to map
 			filename := task.MapFilename
 
-			// intermediate[k] stores the list of key-value pairs corresponding to reduce task number k
+			// intermediate is a 2D array, such that intermediate[k] stores the list of key-value pairs corresponding to reduce task number k
 			intermediate := make([][]KeyValue, task.NReduce)
 			for i := 0; i < task.NReduce; i++ {
 				intermediate[i] = []KeyValue{}
 			}
 
-			// read input file and run map on it, storing the output in kva
+			// read input file and run map on its contents, storing the output in kva (code from mrsequential.go)
 			file, err := os.Open(filename)
 			if err != nil {
 				log.Fatalf("cannot open %v", filename)
@@ -85,31 +84,35 @@ func Worker(mapf func(string, string) []KeyValue,
 
 			// split kva into nReduce intermediate lists
 			for _, kv := range kva {
+				// uses hint given at the top of this file
 				reduceTaskNum := ihash(kv.Key) % task.NReduce
 				intermediate[reduceTaskNum] = append(intermediate[reduceTaskNum], kv)
 			}
 
 			// write to intermediate files
 			for i := 0; i < task.NReduce; i++ {
+				// create a temporary file
 				dest_filename := fmt.Sprintf("mr-%d-%d", task.MapTaskNumber, i)
-				// create a temporary file that is guaranteed not to share a name with any others
 				dest_file, _ := os.CreateTemp(tempdir, "mrtempfile_intermediate_output")
 
+				// write data to this file
 				enc := json.NewEncoder(dest_file)
 				for _, kv := range intermediate[i] {
 					enc.Encode(&kv)
 				}
-				// once all the data has beeen written to disk, rename the output file. this operation is atomic on UNIX
 				dest_file.Close()
+
+				// once all the data has beeen written to disk, rename the output file. this operation is atomic on UNIX
 				os.Rename(dest_file.Name(), path.Join(cwd, dest_filename))
 			}
 
-			completeReport := MarkMapCompleteArgs{}
-			completeReport.MapTaskNumber = task.MapTaskNumber
+			completionReceipt := MarkMapCompleteArgs{}
+			completionReceipt.MapTaskNumber = task.MapTaskNumber
+			// TODO: handle the case where the execution above is slow and another worker is assiged this task, similarly for the below reduce case
 			// the coordinator is waiting for me to complete my map task, so it will definitely not be dead and this call() will return without an error
-			call("Coordinator.MarkMapComplete", &completeReport, &MarkMapCompleteReply{})
+			call("Coordinator.MarkMapComplete", &completionReceipt, &MarkMapCompleteReply{})
 		case ReduceTask:
-			// populate key-value array read in from intermidiate input files
+			// populate key-value array read in from intermidiate input files (code given by the hint)
 			intermediate := []KeyValue{}
 			for i := 0; i < task.NMap; i++ {
 				source_filename := fmt.Sprintf("mr-%d-%d", i, task.ReduceTaskNumber)
@@ -128,11 +131,10 @@ func Worker(mapf func(string, string) []KeyValue,
 			sort.Sort(ByKey(intermediate))
 
 			oname := fmt.Sprintf("mr-out-%d", task.ReduceTaskNumber)
-			// create a temporary file that is guaranteed not to share a name with any others
+			// create a temporary file
 			ofile, _ := os.CreateTemp(tempdir, "mrtempfile_reduce_output")
 
-			// call Reduce on each distinct key in intermediate[],
-			// and print the result to mr-out-X, where X is the reduce task number
+			// call Reduce on each distinct key in intermediate[] (code from mrsequential.go)
 			i := 0
 			for i < len(intermediate) {
 				j := i + 1
@@ -150,47 +152,21 @@ func Worker(mapf func(string, string) []KeyValue,
 
 				i = j
 			}
+
 			// once all the data has beeen written to disk, rename the output file. this operation is atomic on UNIX
 			ofile.Close()
 			os.Rename(ofile.Name(), path.Join(cwd, oname))
 
-			// remove intermediate files
+			// remove the intermediate files
 			for i := 0; i < task.NMap; i++ {
 				os.Remove(fmt.Sprintf("mr-%d-%d", i, task.ReduceTaskNumber))
 			}
 
-			completeReport := MarkReduceCompleteArgs{}
-			completeReport.ReduceTaskNumber = task.ReduceTaskNumber
+			completionReceipt := MarkReduceCompleteArgs{}
+			completionReceipt.ReduceTaskNumber = task.ReduceTaskNumber
 			// the coordinator is waiting for me to complete my reduce task, so it will definitely not be dead and this call() will return without an error
-			call("Coordinator.MarkReduceComplete", &completeReport, &MarkReduceCompleteReply{})
+			call("Coordinator.MarkReduceComplete", &completionReceipt, &MarkReduceCompleteReply{})
 		}
-	}
-}
-
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-func CallExample() {
-
-	// declare an argument structure.
-	args := ExampleArgs{}
-
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
-	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
-	} else {
-		fmt.Printf("call failed!\n")
 	}
 }
 

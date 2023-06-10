@@ -39,16 +39,17 @@ type Coordinator struct {
 	reduceStartTime []time.Time
 }
 
-// Your code here -- RPC handlers for the worker to call.
-
+// a worker calls this to request a task, which can be a map task or a reduce task
 func (c *Coordinator) TaskRequest(args *TaskRequestArgs, reply *TaskRequestReply) error {
+	// lock shared memory until this function returns
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// populate metadata fields
 	reply.NReduce = c.nReduce
 	reply.NMap = c.nMap
 
-	// see if any map tasks are available/not yet started
+	// check if any map tasks are available/not yet started
 	for i, v := range c.mapStatus {
 		if v == MapNotStarted {
 			reply.TaskToDo = MapTask
@@ -62,7 +63,8 @@ func (c *Coordinator) TaskRequest(args *TaskRequestArgs, reply *TaskRequestReply
 		}
 	}
 
-	// see if any map tasks are in progress but are taking too long (more than 10s)
+	// check if any map tasks are in progress but are taking too long (more than 10s)
+	// it doesn't matter if the old worker is still running, because upon completion, each worker writes out the correct output data to the same file
 	for i, v := range c.mapStatus {
 		if v == MapInProgress && time.Now().Sub(c.mapStartTime[i]).Seconds() > 10 {
 			reply.TaskToDo = MapTask
@@ -76,7 +78,7 @@ func (c *Coordinator) TaskRequest(args *TaskRequestArgs, reply *TaskRequestReply
 		}
 	}
 
-	// if any map tasks are still in progress, then we cannot give out a task
+	// if any map tasks are still in progress but the condition above has not been met, then we cannot give out a task
 	for _, v := range c.mapStatus {
 		if v == MapInProgress {
 			reply.TaskToDo = TaskUnavailable
@@ -84,8 +86,7 @@ func (c *Coordinator) TaskRequest(args *TaskRequestArgs, reply *TaskRequestReply
 		}
 	}
 
-	// given that all the map tasks are completed,
-	// see if any reduce tasks are available/not yet started
+	// given that all the map tasks are completed, check if any reduce tasks are available/not yet started
 	for i, v := range c.reduceStatus {
 		if v == ReduceNotStarted {
 			reply.TaskToDo = ReduceTask
@@ -98,7 +99,8 @@ func (c *Coordinator) TaskRequest(args *TaskRequestArgs, reply *TaskRequestReply
 		}
 	}
 
-	// see if any reduce tasks are in progress but are taking too long (more than 10s)
+	// check if any reduce tasks are in progress but are taking too long (more than 10s)
+	// it doesn't matter if the old worker is still running, because upon completion, each worker writes out the correct output data to the same file
 	for i, v := range c.reduceStatus {
 		if v == ReduceInProgress && time.Now().Sub(c.reduceStartTime[i]).Seconds() > 10 {
 			reply.TaskToDo = ReduceTask
@@ -111,28 +113,26 @@ func (c *Coordinator) TaskRequest(args *TaskRequestArgs, reply *TaskRequestReply
 		}
 	}
 
-	// if we have reached this point, all the map tasks are complete and all the reduce tasks are one of: in progress, or complete
+	// if we have reached this point, it means that all the map tasks are complete and each of the reduce tasks is either in progress (and started recently) or complete
 	reply.TaskToDo = TaskUnavailable
 	return nil
 }
+
+// a worker calls this to notify the coordinator that a given map task has been completed
 func (c *Coordinator) MarkMapComplete(args *MarkMapCompleteArgs, reply *MarkMapCompleteReply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	c.mapStatus[args.MapTaskNumber] = MapCompleted
 	return nil
 }
+
+// a worker calls this to notify the coordinator that a given reduce task has been completed
 func (c *Coordinator) MarkReduceComplete(args *MarkReduceCompleteArgs, reply *MarkReduceCompleteReply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.reduceStatus[args.ReduceTaskNumber] = ReduceCompleted
-	return nil
-}
 
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
+	c.reduceStatus[args.ReduceTaskNumber] = ReduceCompleted
 	return nil
 }
 
@@ -156,14 +156,14 @@ func (c *Coordinator) Done() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// check that all the map tasks have been completed
+	// ensure that all the map tasks have been completed
 	for _, v := range c.mapStatus {
 		if v != MapCompleted {
 			return false
 		}
 	}
 
-	// check that all the reduce tasks have been completed
+	// ensure that all the reduce tasks have been completed
 	for _, v := range c.reduceStatus {
 		if v != ReduceCompleted {
 			return false
@@ -181,7 +181,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	nMap := len(files)
 
-	// note that the default values are 0 - "not started"
+	// note that the default values are 0 - "not yet started"
 	mStatus := make([]MapTaskStatus, nMap)
 	rStatus := make([]ReduceTaskStatus, nReduce)
 
