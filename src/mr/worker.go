@@ -108,9 +108,12 @@ func Worker(mapf func(string, string) []KeyValue,
 
 			completionReceipt := MarkMapCompleteArgs{}
 			completionReceipt.MapTaskNumber = task.MapTaskNumber
-			// TODO: handle the case where the execution above is slow and another worker is assiged this task, similarly for the below reduce case
-			// the coordinator is waiting for me to complete my map task, so it will definitely not be dead and this call() will return without an error
-			call("Coordinator.MarkMapComplete", &completionReceipt, &MarkMapCompleteReply{})
+			receiptOk := call("Coordinator.MarkMapComplete", &completionReceipt, &MarkMapCompleteReply{})
+			if !receiptOk {
+				// there is a small chance that the above execution was too slow and all the other tasks were completed by other workers, in which case the coordinator is dead and we are done
+				return
+			}
+
 		case ReduceTask:
 			// populate key-value array read in from intermidiate input files (code given by the hint)
 			intermediate := []KeyValue{}
@@ -164,8 +167,11 @@ func Worker(mapf func(string, string) []KeyValue,
 
 			completionReceipt := MarkReduceCompleteArgs{}
 			completionReceipt.ReduceTaskNumber = task.ReduceTaskNumber
-			// the coordinator is waiting for me to complete my reduce task, so it will definitely not be dead and this call() will return without an error
-			call("Coordinator.MarkReduceComplete", &completionReceipt, &MarkReduceCompleteReply{})
+			receiptOk := call("Coordinator.MarkReduceComplete", &completionReceipt, &MarkReduceCompleteReply{})
+			if !receiptOk {
+				// there is a small chance that the above execution was too slow and all the other tasks were completed by other workers, in which case the coordinator is dead and we are done
+				return
+			}
 		}
 	}
 }
