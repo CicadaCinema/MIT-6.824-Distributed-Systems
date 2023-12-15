@@ -1,0 +1,18 @@
+My notes on Lecture 2:
+
+Go:
+- note that Go's garbage collector saves the programmer from needing to manually write code for reference counting
+
+Threads:
+- in a multi-threaded program, each thread has its own stack, but they all live in the same address space
+- alternative: event-driven/asynchronous programming. in this model, there is a single thread of control which loops and waits for events/requests to come in and responds to them. typically there is a table containing 'state' for every task the program is managing. however, it is typically more 'convenient' to program in a multi-threaded style, rather than this. this approach gives us I/O concurrency, but not CPU parallelism. the overhead here is usually less than that of threads.
+- note that goroutines are not equivalent to operating system threads. "Go cleverly multiplexes many goroutines on top of single operating system threads to reduce overhead."
+- note that some machine instructions are atomic, and some aren't
+
+Crawler:
+- one of the problems with buggy code with races is that it sometimes works, so is hard to debug
+- note that objects like channels are implemented in such a way as to free the programmer from having to thinking about the channel as 'shared memory'
+
+RPC:
+- failures mean that RPCs are not identical to procedure calls
+

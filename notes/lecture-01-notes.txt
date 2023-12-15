@@ -1,0 +1,38 @@
+My notes on the MapReduce (2004) paper:
+- If we specify a task in terms of this model, we get parallelisation 'for free'.
+- An example of a computation is processing raw data (crawled documents, web request logs) to produce derived data (inverted indices, various representations of the graph structure of web documents, summaries of the number of pages crawled per host, the set of most frequent queries in a given day). These computations are straightforward but the input data is large.
+- The user writes two functions, Map and Reduce. The user does not have to deal with the complexities of distributed systems.
+- 3.1 step 5: it looks like typically there are much more reduce tasks than reduce workers? (I didn't really understand this part.) See also 4.1 .
+- This framework relies on the determinism of Map/Reduce tasks, and on the atomicity of a file renaming operation. (I didn't really understand the part about non-determinism.)
+- 5.2 Grep: just for fun - I wonder how fast my laptop could grep through a terabyte of data... Here, we have 1800 machines, each with two 2GHz processors and at least 2.5GB of memory for the task. The cluster completed the job in 150s. In total that's at least 4.5TB of memory, but the input size was only ~1TB. Could they have gotten away with fewer machines? But these machines were mostly idle (the computation was run on a weekend afternoon).
+- Google search, 20TB of data as input (!) in 2004. The second bullet point in 6.1 implies that as a result of using MapReduce, the indexing computations were allowed to be more wasteful of passes over data, as a price to pay for the simplicity of the computations themselves.
+- Production use-cases at Google: web search, sorting, data mining, machine learning.
+- The MapReduce model makes efficient use of large machine clusters.
+- Surely this is not the only way to restrict the programming model to obtain parallelisation. Can we think of any more?
+
+Overall I found this to be a high-quality paper, and it did not skip over the details/statistics of how MapReduce is used internally at Google.
+
+
+My notes on the lecture:
+Part 1 - Introduction:
+- A distributed system is a set of computers that are cooperating to get some coherent task done.
+- MapReduce is an example of a big data computation.
+- There is a 'split' between distributed infrastructure and the applications which are running on this infrastructure.
+- We would like to make it easy to build applications on top of our infrastructure. To do this we introduce abstractions.
+- Examples of critical tools used to build distributed systems: RPC, threads, concurrency control (eg locks).
+- We want scalable performance (ie 2x the resources nets us 2x the throughput).
+- Big scale turns rare events into constant problems. We would like to mask these failures from application programmers.
+- The key problem in replicated systems is consistency. There is a trade-off between consistency and speed (see strong vs weak consistency).
+Part 2 - MapReduce:
+- It is expensive/wasteful (of time and engineering effort) to write a bespoke, one-off distributed indexing job. We would prefer for application developers to write in a simpler framework/computational model.
+- (See notes for a nice diagram.)
+- We say that a single MapReduce job consists of a number of Map tasks and a number of Reduce tasks.
+- Note: MapReduce jobs use data stored in the Google File System (GFS) (see later).
+- In the world of the MapReduce paper, the most constraining bottleneck in the MapReduce system at Google was network throughput.
+- One optimisation (if GFS is used) (in 2004): assign the Map workers to minimise network transfers 'Input -> Map'. By default, the Map task will happen on the same machine as its input data.
+- The 'shuffle', transformation from row storage to column storage, is the most expensive part of MapReduce.
+- Notice that the sort job emits the same amount of data in output as it takes in as input. This means that this job is particularly network-heavy.
+- Modern networks are a lot faster than Google's network in 2004.
+
+I found that the lecture picked up on a lot of details in the MapReduce paper that I missed when reading it myself.
+
